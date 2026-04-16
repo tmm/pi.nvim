@@ -11,6 +11,11 @@
       "onFail": "download"
     }
   },
+  "pi": {
+    "extensions": [
+      "./pi-extension"
+    ]
+  },
   "scripts": {
     "check": "vp check",
     "check:fix": "vp check --fix",
