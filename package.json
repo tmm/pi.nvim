@@ -1,6 +1,5 @@
 {
   "name": "pi.nvim",
-  "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,8 +7,6 @@
     "check:fix": "vp check --fix",
     "lint": "vp lint",
     "lint:fix": "vp lint --fix",
-    "fmt": "vp fmt",
-    "fmt:check": "vp fmt --check",
     "prepare": "simple-git-hooks",
     "staged": "vp staged",
     "test": "vitest run",

@@ -3,9 +3,10 @@ import os from 'node:os'
 import path from 'node:path'
 import net from 'node:net'
 
+import type { ExtensionAPI } from '@mariozechner/pi-coding-agent'
 import { expect, test, vi } from 'vitest'
 
-import extension from '../extension/index.ts'
+import extension from '../extension/index.js'
 
 type RegisteredCommand = {
   name: string
@@ -26,21 +27,21 @@ function loadExtension() {
   const sessionShutdownHandlers: Array<(event: any, ctx: any) => Promise<void> | void> = []
 
   extension({
-    on(event, handler) {
+    on(event: any, handler: any) {
       if (event === 'session_start') sessionStartHandlers.push(handler)
       if (event === 'session_shutdown') sessionShutdownHandlers.push(handler)
     },
-    registerCommand(name, options) {
+    registerCommand(name: string, options: any) {
       commands.push({ name, description: options.description, handler: options.handler })
     },
-    registerTool(definition) {
+    registerTool(definition: any) {
       tools.push({
         name: definition.name,
         description: definition.description,
         execute: definition.execute,
       })
     },
-  } as any)
+  } as ExtensionAPI)
 
   return { commands, tools, sessionStartHandlers, sessionShutdownHandlers }
 }
@@ -64,7 +65,10 @@ async function startBridgeServer(responseFactory: (target: string) => any) {
   return {
     host: '127.0.0.1',
     port: address.port,
-    stop: async () => await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve()))),
+    stop: async () =>
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      ),
   }
 }
 
@@ -212,7 +216,9 @@ test('auto mode does not fall back to another project when current project bridg
 
   const { tools } = loadExtension()
   const tool = tools[0]!
-  const result = await tool.execute('call_1', { target: 'current' }, undefined, undefined, { cwd: repoA })
+  const result = await tool.execute('call_1', { target: 'current' }, undefined, undefined, {
+    cwd: repoA,
+  })
 
   expect(result.isError).toBe(true)
   expect(result.content[0].text).toContain('No pi.nvim bridge lockfile found')
@@ -253,15 +259,25 @@ test('manual mode sticks to selected instance across cwd changes', async () => {
 
   fs.mkdirSync(path.join(tmpDir, 'a'), { recursive: true })
   fs.mkdirSync(path.join(tmpDir, 'b'), { recursive: true })
-  fs.writeFileSync(path.join(tmpDir, 'a', 'lock.json'), JSON.stringify({ host: bridgeA.host, port: bridgeA.port, token: 'test', project_root: repoA }))
-  fs.writeFileSync(path.join(tmpDir, 'b', 'lock.json'), JSON.stringify({ host: bridgeB.host, port: bridgeB.port, token: 'test', project_root: repoB }))
+  fs.writeFileSync(
+    path.join(tmpDir, 'a', 'lock.json'),
+    JSON.stringify({ host: bridgeA.host, port: bridgeA.port, token: 'test', project_root: repoA }),
+  )
+  fs.writeFileSync(
+    path.join(tmpDir, 'b', 'lock.json'),
+    JSON.stringify({ host: bridgeB.host, port: bridgeB.port, token: 'test', project_root: repoB }),
+  )
 
   const ui = makeUi()
   ui.select.mockResolvedValue('~/repo-b • lua/b.lua')
   const { commands, tools } = loadExtension()
-  await commands.find((entry) => entry.name === 'nvim-switch')!.handler('', { cwd: repoA, hasUI: true, ui })
+  await commands
+    .find((entry) => entry.name === 'nvim-switch')!
+    .handler('', { cwd: repoA, hasUI: true, ui })
 
-  const result = await tools[0]!.execute('call_1', { target: 'current' }, undefined, undefined, { cwd: repoA })
+  const result = await tools[0]!.execute('call_1', { target: 'current' }, undefined, undefined, {
+    cwd: repoA,
+  })
   expect(result.isError).not.toBe(true)
   expect(result.content[0].text).toContain('lua/b.lua')
 
@@ -289,7 +305,10 @@ test('status hides after reconnect timeout elapses', async () => {
 
   fs.mkdirSync(path.join(tmpDir, 'a'), { recursive: true })
   const lockfilePath = path.join(tmpDir, 'a', 'lock.json')
-  fs.writeFileSync(lockfilePath, JSON.stringify({ host: bridge.host, port: bridge.port, token: 'test', project_root: repo }))
+  fs.writeFileSync(
+    lockfilePath,
+    JSON.stringify({ host: bridge.host, port: bridge.port, token: 'test', project_root: repo }),
+  )
 
   const ui = makeUi()
   const { sessionStartHandlers } = loadExtension()
@@ -300,10 +319,17 @@ test('status hides after reconnect timeout elapses', async () => {
   fs.rmSync(lockfilePath, { force: true })
 
   await vi.advanceTimersByTimeAsync(400)
-  expect(ui.setStatus).toHaveBeenLastCalledWith('nvim-bridge', expect.stringContaining('Reconnecting'))
+  await vi.waitFor(() => {
+    expect(ui.setStatus).toHaveBeenLastCalledWith(
+      'nvim-bridge',
+      expect.stringContaining('Reconnecting'),
+    )
+  })
 
   await vi.advanceTimersByTimeAsync(5200)
-  expect(ui.setStatus).toHaveBeenLastCalledWith('nvim-bridge', undefined)
+  await vi.waitFor(() => {
+    expect(ui.setStatus).toHaveBeenLastCalledWith('nvim-bridge', undefined)
+  })
 
   vi.useRealTimers()
   fs.rmSync(tmpDir, { recursive: true, force: true })

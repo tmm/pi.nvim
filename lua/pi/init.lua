@@ -95,14 +95,7 @@ local function get_buffer_text(buf)
   return table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
 end
 
-local function get_visual_selection(buf)
-  local mode = vim.fn.mode()
-  if mode ~= "v" and mode ~= "V" and mode ~= "\22" then
-    return nil
-  end
-
-  local start_pos = vim.fn.getpos("v")
-  local end_pos = vim.fn.getpos(".")
+local function selection_from_positions(buf, mode, start_pos, end_pos)
   if start_pos[2] == 0 or end_pos[2] == 0 then
     return nil
   end
@@ -133,11 +126,41 @@ local function get_visual_selection(buf)
   }
 end
 
+local function get_visual_selection(buf)
+  local mode = vim.fn.mode()
+  if mode ~= "v" and mode ~= "V" and mode ~= "\22" then
+    return nil
+  end
+
+  return selection_from_positions(buf, mode, vim.fn.getpos("v"), vim.fn.getpos("."))
+end
+
+local function get_last_visual_selection(buf)
+  local mode = vim.fn.visualmode()
+  if mode ~= "v" and mode ~= "V" and mode ~= "\22" then
+    return nil
+  end
+
+  local selection = selection_from_positions(buf, mode, vim.fn.getpos("'<"), vim.fn.getpos("'>"))
+  if not selection then
+    return nil
+  end
+
+  selection.active = false
+  return selection
+end
+
 local function get_selection(buf)
   local selection = get_visual_selection(buf)
   if selection then
     M.last_visual_selection = vim.deepcopy(selection)
     return selection
+  end
+
+  local last_selection = get_last_visual_selection(buf)
+  if last_selection then
+    M.last_visual_selection = vim.deepcopy(last_selection)
+    return last_selection
   end
 
   if M.last_visual_selection then

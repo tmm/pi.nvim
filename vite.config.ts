@@ -16,4 +16,8 @@ export default defineConfig({
   staged: {
     '*.{js,mjs,cjs,ts,mts,cts,tsx,json,md}': 'vp check --fix',
   },
+  test: {
+    environment: 'node',
+    setupFiles: ['./test/setup.ts'],
+  },
 })

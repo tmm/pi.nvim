@@ -59,7 +59,11 @@ async function startNvim(cwd: string, filePath: string, cacheHome: string) {
     stderr += chunk.toString('utf8')
   })
 
-  await waitFor(() => fs.existsSync(socketPath), 5000, `nvim socket not created. stderr:\n${stderr}`)
+  await waitFor(
+    () => fs.existsSync(socketPath),
+    5000,
+    `nvim socket not created. stderr:\n${stderr}`,
+  )
 
   return {
     socketPath,
@@ -76,7 +80,9 @@ async function startNvim(cwd: string, filePath: string, cacheHome: string) {
 
 async function runRemote(socketPath: string, args: string[]) {
   await new Promise<void>((resolve, reject) => {
-    const child = spawn('nvim', ['--server', socketPath, ...args], { stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn('nvim', ['--server', socketPath, ...args], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
     let stderr = ''
     child.stderr.on('data', (chunk) => {
       stderr += chunk.toString('utf8')
@@ -100,13 +106,17 @@ async function waitFor<T>(fn: () => T | undefined | false, timeoutMs: number, me
 
 async function waitForLockfile(cacheHome: string) {
   const base = path.join(cacheHome, 'nvim', 'pi-bridge')
-  const lockfile = await waitFor(() => {
-    if (!fs.existsSync(base)) return undefined
-    for (const dir of fs.readdirSync(base)) {
-      const candidate = path.join(base, dir, 'lock.json')
-      if (fs.existsSync(candidate)) return candidate
-    }
-  }, 5000, 'lockfile not found')
+  const lockfile = await waitFor(
+    () => {
+      if (!fs.existsSync(base)) return undefined
+      for (const dir of fs.readdirSync(base)) {
+        const candidate = path.join(base, dir, 'lock.json')
+        if (fs.existsSync(candidate)) return candidate
+      }
+    },
+    5000,
+    'lockfile not found',
+  )
 
   return lockfile
 }
