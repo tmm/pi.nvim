@@ -68,10 +68,11 @@ by querying Neovim automatically.
 ## Development
 
 ```bash
-npm install
-npm run check
-npm run check:fix
-npm run staged
+pnpm install
+pnpm check
+pnpm check:fix
+pnpm staged
+pnpm test
 ```
 
 This uses [Vite+](https://viteplus.dev/) for formatting, linting, staged-file checks, and TypeScript Go powered type checking via `vp check`.

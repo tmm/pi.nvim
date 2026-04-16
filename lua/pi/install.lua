@@ -6,7 +6,7 @@ local function plugin_root()
 end
 
 local function bundled_extension_path()
-  return vim.fs.joinpath(plugin_root(), "pi-extension", "pi-nvim-bridge.ts")
+  return vim.fs.joinpath(plugin_root(), "extension", "index.ts")
 end
 
 local function installed_extension_path()

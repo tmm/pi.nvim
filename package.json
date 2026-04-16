@@ -13,7 +13,7 @@
   },
   "pi": {
     "extensions": [
-      "./pi-extension"
+      "./extension"
     ]
   },
   "scripts": {
@@ -23,7 +23,9 @@
     "lint:fix": "vp lint --fix",
     "fmt": "vp fmt",
     "fmt:check": "vp fmt --check",
-    "staged": "vp staged"
+    "staged": "vp staged",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "engines": {
     "node": ">=24.5.1"
@@ -33,6 +35,7 @@
     "@typescript/native-preview": "7.0.0-dev.20260318.1",
     "@types/node": "^24.6.0",
     "@mariozechner/pi-coding-agent": "0.67.3",
-    "@sinclair/typebox": "^0.34.41"
+    "@sinclair/typebox": "^0.34.41",
+    "vitest": "^3.2.4"
   }
 }
