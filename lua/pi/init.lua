@@ -61,6 +61,10 @@ local function lockfile_path(buf)
   return vim.fs.joinpath(bridge_dir(buf), "lock.json")
 end
 
+local function prompt_lockfile_path(buf)
+  return vim.fs.joinpath(bridge_dir(buf), "pi-session.json")
+end
+
 local function ensure_bridge_dir(buf)
   vim.fn.mkdir(bridge_dir(buf), "p")
 end
@@ -348,16 +352,19 @@ local function start_server()
   local token = vim.fn.sha256(tostring(vim.loop.hrtime()) .. tostring(vim.fn.getpid()))
 
   assert(server:bind("127.0.0.1", 0))
-  server:listen(128, vim.schedule_wrap(function(err)
-    assert(not err, err)
-    local client = vim.uv.new_tcp()
-    local ok = server:accept(client)
-    if not ok then
-      client:close()
-      return
-    end
-    handle_client(client)
-  end))
+  server:listen(
+    128,
+    vim.schedule_wrap(function(err)
+      assert(not err, err)
+      local client = vim.uv.new_tcp()
+      local ok = server:accept(client)
+      if not ok then
+        client:close()
+        return
+      end
+      handle_client(client)
+    end)
+  )
 
   local address = server:getsockname()
   M.server = {
@@ -396,8 +403,19 @@ end
 function M.status()
   local path = lockfile_path(current_buf())
   local ok = vim.uv.fs_stat(path) ~= nil
-  local message = ok and ("pi.nvim bridge active: " .. path) or ("pi.nvim bridge missing: " .. path)
-  vim.notify(message, vim.log.levels.INFO)
+  local install = require("pi.install")
+  local bundled_version = install.version()
+  local installed_version = install.installed_version()
+  local extension_path = vim.fs.joinpath(vim.fn.expand("~"), ".pi", "agent", "extensions", "pi-nvim.ts")
+
+  local message = {
+    ok and ("pi.nvim bridge active: " .. path) or ("pi.nvim bridge missing: " .. path),
+    "bundled extension version: " .. bundled_version,
+    "installed extension version: " .. (installed_version or "not installed"),
+    "installed extension path: " .. extension_path,
+  }
+
+  vim.notify(table.concat(message, "\n"), vim.log.levels.INFO)
   return path
 end
 
@@ -407,6 +425,158 @@ function M.copy_ref(opts)
   vim.fn.setreg("+", ref)
   vim.fn.setreg('"', ref)
   vim.notify("Copied " .. ref, vim.log.levels.INFO)
+end
+
+local function read_prompt_lockfile(buf)
+  local path = prompt_lockfile_path(buf)
+  local ok_read, lines = pcall(vim.fn.readfile, path)
+  if not ok_read or not lines or #lines == 0 then
+    return nil, path, "pi session not found"
+  end
+
+  local ok, decoded = pcall(vim.json.decode, table.concat(lines, "\n"))
+  if not ok then
+    return nil, path, "invalid pi session lockfile"
+  end
+
+  return decoded, path
+end
+
+local function send_prompt(message, opts, on_done)
+  opts = opts or {}
+  local buf = current_buf()
+  local lockfile, path, err = read_prompt_lockfile(buf)
+  if not lockfile then
+    if on_done then
+      on_done(false, err, path)
+    end
+    return
+  end
+
+  local client = assert(vim.uv.new_tcp())
+  local chunks = {}
+  local finished = false
+
+  local function finish(ok, response_err)
+    if finished then
+      return
+    end
+    finished = true
+    client:read_stop()
+    client:close()
+    if on_done then
+      on_done(ok, response_err, path)
+    end
+  end
+
+  client:connect(lockfile.host, lockfile.port, function(connect_err)
+    if connect_err then
+      finish(false, connect_err)
+      return
+    end
+
+    local request = {
+      token = lockfile.token,
+      message = message,
+      deliverAs = opts.deliver_as,
+    }
+
+    client:write(vim.json.encode(request) .. "\n")
+    client:read_start(vim.schedule_wrap(function(read_err, chunk)
+      if read_err then
+        finish(false, read_err)
+        return
+      end
+
+      if chunk then
+        table.insert(chunks, chunk)
+        local raw = table.concat(chunks)
+        if not raw:find("\n", 1, true) then
+          return
+        end
+
+        local line = raw:match("^(.-)\n") or raw
+        local ok, response = pcall(vim.json.decode, line)
+        if not ok then
+          finish(false, "invalid pi response")
+        elseif response.ok then
+          finish(true)
+        else
+          finish(false, response.error or "pi request failed")
+        end
+        return
+      end
+
+      local raw = table.concat(chunks)
+      local ok, response = pcall(vim.json.decode, raw)
+      if not ok then
+        finish(false, "invalid pi response")
+      elseif response.ok then
+        finish(true)
+      else
+        finish(false, response.error or "pi request failed")
+      end
+    end))
+  end)
+end
+
+function M.prompt(opts)
+  opts = opts or {}
+  local prompt_label = "Message to pi: "
+  if opts.deliver_as == "steer" then
+    prompt_label = "Steer pi: "
+  elseif opts.deliver_as == "followUp" then
+    prompt_label = "Queue follow-up for pi: "
+  end
+
+  local function prepare_message(message)
+    local text = vim.trim(message or "")
+    if text == "" then
+      return ""
+    end
+
+    if opts.selection and not text:find("@nvim:selection", 1, true) then
+      text = text .. " @nvim:selection"
+    end
+
+    return text
+  end
+
+  local function submit(message)
+    local text = prepare_message(message)
+    if text == "" then
+      return
+    end
+
+    send_prompt(text, { deliver_as = opts.deliver_as }, function(ok, err, path)
+      vim.schedule(function()
+        if ok then
+          vim.notify("Sent message to pi", vim.log.levels.INFO)
+        else
+          local details = err or "unknown error"
+          if path then
+            details = details .. ": " .. path
+          end
+          vim.notify("Could not send message to pi: " .. details, vim.log.levels.WARN)
+        end
+      end)
+    end)
+  end
+
+  if opts.args and opts.args ~= "" then
+    submit(opts.args)
+    return
+  end
+
+  vim.ui.input({
+    prompt = prompt_label,
+    default = opts.selection and "@nvim:selection " or nil,
+  }, function(input)
+    if input == nil then
+      return
+    end
+    submit(input)
+  end)
 end
 
 function M.enable()
@@ -430,40 +600,64 @@ function M.setup(opts)
   }, opts or {})
 
   if M.opts.auto_install_pi_extension then
-    require("pi.install").install({ notify = M.opts.notify_on_install })
+    require("pi.install").install_async({ notify = M.opts.notify_on_install })
   end
 
   local group = vim.api.nvim_create_augroup("pi_nvim_bridge", { clear = true })
 
-  vim.api.nvim_create_user_command("PiBridgeEnable", function()
+  vim.api.nvim_create_user_command("PiEnable", function()
     M.enable()
   end, { desc = "Enable pi.nvim bridge" })
 
-  vim.api.nvim_create_user_command("PiBridgeDisable", function()
+  vim.api.nvim_create_user_command("PiDisable", function()
     M.disable()
   end, { desc = "Disable pi.nvim bridge" })
 
-  vim.api.nvim_create_user_command("PiBridgeRefresh", function()
+  vim.api.nvim_create_user_command("PiRefresh", function()
     M.refresh()
   end, {
     desc = "Refresh pi.nvim bridge context",
     range = true,
   })
 
-  vim.api.nvim_create_user_command("PiBridgeStatus", function()
+  vim.api.nvim_create_user_command("PiStatus", function()
     M.status()
   end, { desc = "Show pi.nvim bridge status" })
 
-  vim.api.nvim_create_user_command("PiBridgeCopyRef", function(opts2)
+  vim.api.nvim_create_user_command("PiCopyRef", function(opts2)
     M.copy_ref({ selection = opts2.range > 0 })
   end, {
     desc = "Copy pi.nvim bridge ref",
     range = true,
   })
 
-  vim.api.nvim_create_user_command("PiBridgeInstallExtension", function()
-    require("pi.install").install({ force = true, notify = true })
+  vim.api.nvim_create_user_command("PiInstallExtension", function()
+    require("pi.install").install_async({ force = true, notify = true })
   end, { desc = "Install pi.nvim extension for pi" })
+
+  vim.api.nvim_create_user_command("PiAsk", function(opts2)
+    M.prompt({ args = opts2.args, selection = opts2.range > 0 })
+  end, {
+    desc = "Prompt for a message and send it to pi",
+    nargs = "*",
+    range = true,
+  })
+
+  vim.api.nvim_create_user_command("PiSteer", function(opts2)
+    M.prompt({ args = opts2.args, deliver_as = "steer", selection = opts2.range > 0 })
+  end, {
+    desc = "Send a steering message to pi",
+    nargs = "*",
+    range = true,
+  })
+
+  vim.api.nvim_create_user_command("PiFollowUp", function(opts2)
+    M.prompt({ args = opts2.args, deliver_as = "followUp", selection = opts2.range > 0 })
+  end, {
+    desc = "Queue a follow-up message for pi",
+    nargs = "*",
+    range = true,
+  })
 
   vim.api.nvim_create_autocmd({
     "BufEnter",

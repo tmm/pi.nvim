@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -25,6 +26,7 @@ function loadExtension() {
   const tools: RegisteredTool[] = []
   const sessionStartHandlers: Array<(event: any, ctx: any) => Promise<void> | void> = []
   const sessionShutdownHandlers: Array<(event: any, ctx: any) => Promise<void> | void> = []
+  const sendUserMessage = vi.fn()
 
   extension({
     on(event: any, handler: any) {
@@ -41,9 +43,10 @@ function loadExtension() {
         execute: definition.execute,
       })
     },
-  } as ExtensionAPI)
+    sendUserMessage,
+  } as unknown as ExtensionAPI)
 
-  return { commands, tools, sessionStartHandlers, sessionShutdownHandlers }
+  return { commands, tools, sessionStartHandlers, sessionShutdownHandlers, sendUserMessage }
 }
 
 async function startBridgeServer(responseFactory: (target: string) => any) {
@@ -119,7 +122,7 @@ test('nvim-status shows lockfile, mode, and current file summary', async () => {
   })
 
   expect(notify).toHaveBeenCalledWith(
-    expect.stringContaining('current: nvim/lua/plugins.lua • L14'),
+    expect.stringContaining('current: nvim/lua/plugins.lua  L14'),
     'info',
   )
 
@@ -286,7 +289,93 @@ test('manual mode sticks to selected instance across cwd changes', async () => {
   fs.rmSync(tmpDir, { recursive: true, force: true })
 })
 
-test('status hides after reconnect timeout elapses', async () => {
+test('session start exposes prompt socket that forwards messages to pi', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-nvim-ext-prompt-'))
+  vi.stubEnv('PI_NVIM_BRIDGE_DIR', tmpDir)
+
+  const repo = path.join(os.homedir(), 'repo-prompt')
+  const ui = makeUi()
+  const { sessionStartHandlers, sessionShutdownHandlers, sendUserMessage } = loadExtension()
+
+  await sessionStartHandlers[0]!({}, { cwd: repo, hasUI: true, ui, isIdle: () => true })
+
+  const lockfilePath = path.join(
+    tmpDir,
+    `repo-prompt-${crypto.createHash('sha256').update(repo).digest('hex').slice(0, 12)}`,
+    'pi-session.json',
+  )
+  const lockfile = JSON.parse(fs.readFileSync(lockfilePath, 'utf8')) as {
+    host: string
+    port: number
+    token: string
+  }
+
+  const response = await new Promise<{ ok: boolean; deliverAs?: string }>((resolve, reject) => {
+    const socket = net.createConnection(lockfile.port, lockfile.host)
+    let raw = ''
+    socket.setTimeout(2000)
+    socket.on('connect', () => {
+      socket.end(JSON.stringify({ token: lockfile.token, message: 'hello from nvim' }) + '\n')
+    })
+    socket.on('data', (chunk) => {
+      raw += chunk.toString('utf8')
+    })
+    socket.on('timeout', () => reject(new Error('prompt timeout')))
+    socket.on('error', reject)
+    socket.on('close', () => resolve(JSON.parse(raw.trim()) as { ok: boolean; deliverAs?: string }))
+  })
+
+  expect(response).toEqual({ ok: true, deliverAs: 'direct' })
+  expect(sendUserMessage).toHaveBeenCalledWith('hello from nvim')
+
+  await sessionShutdownHandlers[0]!({}, { cwd: repo, hasUI: true, ui, isIdle: () => true })
+  expect(fs.existsSync(lockfilePath)).toBe(false)
+
+  fs.rmSync(tmpDir, { recursive: true, force: true })
+})
+
+test('status hides immediately when lockfile disappears', async () => {
+  vi.useFakeTimers()
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-nvim-ext-closed-'))
+  vi.stubEnv('PI_NVIM_BRIDGE_DIR', tmpDir)
+
+  const repo = path.join(os.homedir(), 'repo-a')
+  const bridge = await startBridgeServer(() => ({
+    ok: true,
+    context: {
+      project_root: repo,
+      relative_path: 'lua/a.lua',
+      cursor: { line: 1, col: 0 },
+      selection: { active: false },
+      nvim: { version: '0.11.5' },
+    },
+  }))
+
+  fs.mkdirSync(path.join(tmpDir, 'a'), { recursive: true })
+  const lockfilePath = path.join(tmpDir, 'a', 'lock.json')
+  fs.writeFileSync(
+    lockfilePath,
+    JSON.stringify({ host: bridge.host, port: bridge.port, token: 'test', project_root: repo }),
+  )
+
+  const ui = makeUi()
+  const { sessionStartHandlers } = loadExtension()
+  await sessionStartHandlers[0]!({}, { cwd: repo, hasUI: true, ui })
+  expect(ui.setStatus).toHaveBeenLastCalledWith('nvim-bridge', expect.stringContaining('✓'))
+
+  await bridge.stop()
+  fs.rmSync(lockfilePath, { force: true })
+
+  await vi.advanceTimersByTimeAsync(400)
+  await vi.waitFor(() => {
+    expect(ui.setStatus).toHaveBeenLastCalledWith('nvim-bridge', undefined)
+  })
+
+  vi.useRealTimers()
+  fs.rmSync(tmpDir, { recursive: true, force: true })
+})
+
+test('status shows reconnecting while lockfile still exists but bridge is unreachable', async () => {
   vi.useFakeTimers()
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-nvim-ext-reconnect-'))
   vi.stubEnv('PI_NVIM_BRIDGE_DIR', tmpDir)
@@ -316,7 +405,6 @@ test('status hides after reconnect timeout elapses', async () => {
   expect(ui.setStatus).toHaveBeenLastCalledWith('nvim-bridge', expect.stringContaining('✓'))
 
   await bridge.stop()
-  fs.rmSync(lockfilePath, { force: true })
 
   await vi.advanceTimersByTimeAsync(400)
   await vi.waitFor(() => {

@@ -74,8 +74,30 @@ async function startNvim(cwd: string, filePath: string, cacheHome: string) {
     send: async (keys: string) => {
       await runRemote(socketPath, ['--remote-send', keys])
     },
-    expr: async (expr: string) => await runRemote(socketPath, ['--remote-expr', expr]),
+    expr: async (expr: string) => await runRemoteCapture(socketPath, ['--remote-expr', expr]),
+    command: async (command: string) =>
+      await runRemoteCapture(socketPath, ['--remote-expr', `execute(${JSON.stringify(command)})`]),
   }
+}
+
+async function runRemoteCapture(socketPath: string, args: string[]) {
+  return await new Promise<string>((resolve, reject) => {
+    const child = spawn('nvim', ['--server', socketPath, ...args], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString('utf8')
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString('utf8')
+    })
+    child.on('exit', (code) => {
+      if (code === 0) resolve(stdout.trim())
+      else reject(new Error(stderr || `remote command failed with ${code}`))
+    })
+  })
 }
 
 async function runRemote(socketPath: string, args: string[]) {
@@ -138,6 +160,44 @@ async function queryBridge(lockfile: Lockfile, target: string): Promise<BridgeRe
   })
 }
 
+async function startPromptServer() {
+  let request:
+    | {
+        token: string
+        message: string
+        deliverAs?: 'steer' | 'followUp'
+      }
+    | undefined
+
+  const server = net.createServer((socket) => {
+    let raw = ''
+    socket.on('data', (chunk) => {
+      raw += chunk.toString('utf8')
+      if (!raw.includes('\n')) return
+      request = JSON.parse(raw.split('\n')[0]!) as {
+        token: string
+        message: string
+        deliverAs?: 'steer' | 'followUp'
+      }
+      socket.end(JSON.stringify({ ok: true }) + '\n')
+    })
+  })
+
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()))
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('failed to bind prompt server')
+
+  return {
+    host: '127.0.0.1',
+    port: address.port,
+    getRequest: () => request,
+    stop: async () =>
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      ),
+  }
+}
+
 test('nvim bridge serves current file and active selection', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-nvim-e2e-'))
   const cacheHome = path.join(tmpDir, 'cache')
@@ -192,6 +252,74 @@ test('nvim bridge keeps last selection text but marks it inactive after leaving 
     expect(selection.text).toContain('const one = 1')
     expect(selection.text).toContain('const two = 2')
   } finally {
+    await nvim.stop()
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test('nvim commands are registered and steering commands send the right delivery mode', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-nvim-e2e-prompt-'))
+  const cacheHome = path.join(tmpDir, 'cache')
+  const filePath = path.join(tmpDir, 'example.ts')
+  fs.writeFileSync(filePath, 'const one = 1\n')
+
+  const nvim = await startNvim(tmpDir, filePath, cacheHome)
+  const promptServer = await startPromptServer()
+
+  try {
+    const lockfilePath = await waitForLockfile(cacheHome)
+    const bridgeDir = path.dirname(lockfilePath)
+    fs.writeFileSync(
+      path.join(bridgeDir, 'pi-session.json'),
+      JSON.stringify({
+        host: promptServer.host,
+        port: promptServer.port,
+        token: 'prompt-token',
+        project_root: tmpDir,
+        bridge_dir: bridgeDir,
+      }),
+    )
+
+    expect(await nvim.expr("exists(':PiAsk')")).toBe('2')
+    expect(await nvim.expr("exists(':PiSteer')")).toBe('2')
+    expect(await nvim.expr("exists(':PiFollowUp')")).toBe('2')
+    expect(await nvim.expr("exists(':PiEnable')")).toBe('2')
+    expect(await nvim.expr("exists(':PiStatus')")).toBe('2')
+
+    await nvim.command('PiSteer steer-message')
+    const steerRequest = await waitFor(
+      () => {
+        const request = promptServer.getRequest()
+        if (request?.message === 'steer-message') return request
+      },
+      5000,
+      'PiSteer request not received',
+    )
+    expect(steerRequest.deliverAs).toBe('steer')
+
+    await nvim.send('<Esc>ggV:PiSteer selected-message<CR>')
+    const selectedSteerRequest = await waitFor(
+      () => {
+        const request = promptServer.getRequest()
+        if (request?.message == 'selected-message @nvim:selection') return request
+      },
+      5000,
+      'visual PiSteer request not received',
+    )
+    expect(selectedSteerRequest.deliverAs).toBe('steer')
+
+    await nvim.command('PiFollowUp followup-message')
+    const followUpRequest = await waitFor(
+      () => {
+        const request = promptServer.getRequest()
+        if (request?.message === 'followup-message') return request
+      },
+      5000,
+      'PiFollowUp request not received',
+    )
+    expect(followUpRequest.deliverAs).toBe('followUp')
+  } finally {
+    await promptServer.stop()
     await nvim.stop()
     fs.rmSync(tmpDir, { recursive: true, force: true })
   }

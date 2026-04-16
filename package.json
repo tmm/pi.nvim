@@ -1,10 +1,12 @@
 {
   "name": "pi.nvim",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "check": "vp check",
     "check:fix": "vp check --fix",
+    "check:types": "tsgo --noEmit -p tsconfig.json",
     "lint": "vp lint",
     "lint:fix": "vp lint --fix",
     "prepare": "simple-git-hooks",
