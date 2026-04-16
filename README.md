@@ -54,6 +54,15 @@ Explain @nvim:selection
 Fix @nvim:current using @nvim:diagnostics
 ```
 
+You do not always need to reference these explicitly. If the bridge is active, `pi` can often answer natural questions like:
+
+```text
+What file do I have open?
+What do I have selected?
+```
+
+by querying Neovim automatically.
+
 ## Commands
 
 ### Neovim
