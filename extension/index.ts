@@ -1,10 +1,10 @@
-import { readdir, readFile } from 'node:fs/promises'
-import { Socket } from 'node:net'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
+import * as fs from 'node:fs/promises'
+import * as net from 'node:net'
+import * as os from 'node:os'
+import * as path from 'node:path'
 
+import { Type } from '@mariozechner/pi-ai'
 import type { ExtensionAPI, ExtensionContext } from '@mariozechner/pi-coding-agent'
-import { Type } from '@sinclair/typebox'
 
 const TARGETS = ['current', 'selection', 'diagnostics', 'context', 'all'] as const
 type StatusTheme = Pick<ExtensionContext['ui']['theme'], 'fg'>
@@ -53,30 +53,30 @@ type BridgeResponse = {
 }
 
 function getBridgeBaseDir() {
-  return process.env.PI_NVIM_BRIDGE_DIR || join(homedir(), '.cache', 'nvim', 'pi-bridge')
+  return process.env.PI_NVIM_BRIDGE_DIR || path.join(os.homedir(), '.cache', 'nvim', 'pi-bridge')
 }
 
 async function readJson<T>(path: string): Promise<T> {
-  return JSON.parse(await readFile(path, 'utf8')) as T
+  return JSON.parse(await fs.readFile(path, 'utf8')) as T
 }
 
 async function listLockfiles() {
   const baseDir = getBridgeBaseDir()
   const candidates = [] as Array<{ path: string; lockfile: Lockfile }>
-  const directPath = join(baseDir, 'lock.json')
+  const directPath = path.join(baseDir, 'lock.json')
   const directLockfile = await readJson<Lockfile>(directPath).catch(() => undefined)
   if (directLockfile) {
     candidates.push({ path: directPath, lockfile: directLockfile })
   }
 
-  const entries = await readdir(baseDir, { withFileTypes: true }).catch(() => [])
+  const entries = await fs.readdir(baseDir, { withFileTypes: true }).catch(() => [])
 
   for (const entry of entries) {
     if (!entry.isDirectory()) continue
-    const path = join(baseDir, entry.name, 'lock.json')
-    const lockfile = await readJson<Lockfile>(path).catch(() => undefined)
+    const lockfilePath = path.join(baseDir, entry.name, 'lock.json')
+    const lockfile = await readJson<Lockfile>(lockfilePath).catch(() => undefined)
     if (!lockfile?.project_root) continue
-    candidates.push({ path, lockfile })
+    candidates.push({ path: lockfilePath, lockfile })
   }
 
   return candidates
@@ -119,7 +119,7 @@ function formatContext(context: BridgeContext | undefined) {
 
 async function queryBridge(lockfile: Lockfile, target: Target): Promise<BridgeResponse> {
   return await new Promise((resolve, reject) => {
-    const socket = new Socket()
+    const socket = new net.Socket()
     let raw = ''
     let settled = false
 
@@ -165,7 +165,7 @@ function selectedLineRange(context: BridgeContext | undefined) {
 }
 
 function formatPathForDisplay(path: string) {
-  const home = homedir()
+  const home = os.homedir()
   return path.startsWith(home) ? `~${path.slice(home.length)}` : path
 }
 
