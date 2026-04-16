@@ -23,19 +23,6 @@ Thin Neovim bridge for [pi](https://github.com/mariozechner/pi-coding-agent).
 }
 ```
 
-For local development:
-
-```lua
-{
-  dir = "~/Developer/pi.nvim",
-  lazy = false,
-  opts = {
-    auto_start = true,
-    auto_install_pi_extension = true,
-  },
-}
-```
-
 Then restart Neovim and run `/reload` in `pi`.
 
 ## Usage
