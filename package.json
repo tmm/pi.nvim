@@ -25,6 +25,8 @@
     "fmt:check": "vp fmt --check",
     "staged": "vp staged",
     "test": "vitest run",
+    "test:unit": "vitest run test/extension.test.ts",
+    "test:e2e": "vitest run test/e2e.test.ts",
     "test:watch": "vitest"
   },
   "engines": {
