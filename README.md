@@ -1,6 +1,6 @@
 # pi.nvim
 
-Thin Neovim bridge for [pi](https://github.com/mariozechner/pi-coding-agent).
+Thin Neovim bridge for [Pi](https://pi.dev).
 
 ## What it does
 
@@ -64,6 +64,17 @@ by querying Neovim automatically.
 
 - `/nvim-status`
 - `/nvim-switch`
+
+## Development
+
+```bash
+npm install
+npm run check
+npm run check:fix
+npm run staged
+```
+
+This uses [Vite+](https://viteplus.dev/) for formatting, linting, staged-file checks, and TypeScript Go powered type checking via `vp check`.
 
 ## License
 
