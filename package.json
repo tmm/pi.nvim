@@ -27,7 +27,7 @@
     "vite-plus": "^0.1.18",
     "@typescript/native-preview": "7.0.0-dev.20260318.1",
     "@types/node": "^24.6.0",
-    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-coding-agent": "0.67.3",
     "@sinclair/typebox": "^0.34.41"
   }
 }
