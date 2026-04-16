@@ -158,3 +158,31 @@ test('nvim bridge serves current file and active selection', async () => {
     fs.rmSync(tmpDir, { recursive: true, force: true })
   }
 })
+
+test('nvim bridge keeps last selection text but marks it inactive after leaving visual mode', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-nvim-e2e-inactive-'))
+  const cacheHome = path.join(tmpDir, 'cache')
+  const filePath = path.join(tmpDir, 'example.ts')
+  fs.writeFileSync(filePath, 'const one = 1\nconst two = 2\nconst three = 3\n')
+
+  const nvim = await startNvim(tmpDir, filePath, cacheHome)
+
+  try {
+    const lockfilePath = await waitForLockfile(cacheHome)
+    const lockfile = JSON.parse(fs.readFileSync(lockfilePath, 'utf8')) as Lockfile
+
+    await nvim.send('<Esc>ggVj')
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    await nvim.send('<Esc>')
+    await new Promise((resolve) => setTimeout(resolve, 200))
+
+    const selection = await queryBridge(lockfile, 'selection')
+    expect(selection.ok).toBe(true)
+    expect(selection.context?.selection?.active).toBe(false)
+    expect(selection.text).toContain('const one = 1')
+    expect(selection.text).toContain('const two = 2')
+  } finally {
+    await nvim.stop()
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  }
+})

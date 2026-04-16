@@ -68,6 +68,15 @@ async function startBridgeServer(responseFactory: (target: string) => any) {
   }
 }
 
+function makeUi() {
+  return {
+    notify: vi.fn(),
+    select: vi.fn(),
+    setStatus: vi.fn(),
+    theme: { fg: (_c: string, text: string) => text },
+  }
+}
+
 test('registers nvim bridge tool and commands', () => {
   const { commands, tools } = loadExtension()
 
@@ -153,27 +162,149 @@ test('nvim-switch shows auto target and project/file entries', async () => {
     JSON.stringify({ host: bridgeB.host, port: bridgeB.port, token: 'test', project_root: repoB }),
   )
 
-  const select = vi.fn().mockResolvedValue('Auto (~/repo-a • lua/a.lua)')
-  const notify = vi.fn()
-  const setStatus = vi.fn()
+  const ui = makeUi()
+  ui.select.mockResolvedValue('Auto (~/repo-a • lua/a.lua)')
   const { commands } = loadExtension()
   const command = commands.find((entry) => entry.name === 'nvim-switch')
 
   await command!.handler('', {
     cwd: repoA,
     hasUI: true,
-    ui: { select, notify, setStatus, theme: { fg: (_c: string, text: string) => text } },
+    ui,
   })
 
-  const items = select.mock.calls[0]![1] as string[]
+  const items = ui.select.mock.calls[0]![1] as string[]
   expect(items).toEqual([
     'Auto (~/repo-a • lua/a.lua)',
     '~/repo-a • lua/a.lua',
     '~/repo-b • lua/b.lua',
   ])
-  expect(notify).toHaveBeenCalledWith('Neovim bridge selection reset to auto', 'info')
+  expect(ui.notify).toHaveBeenCalledWith('Neovim bridge selection reset to auto', 'info')
 
   await bridgeA.stop()
   await bridgeB.stop()
+  fs.rmSync(tmpDir, { recursive: true, force: true })
+})
+
+test('auto mode does not fall back to another project when current project bridge is gone', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-nvim-ext-auto-'))
+  vi.stubEnv('PI_NVIM_BRIDGE_DIR', tmpDir)
+
+  const repoA = path.join(os.homedir(), 'repo-a')
+  const repoB = path.join(os.homedir(), 'repo-b')
+  const bridgeB = await startBridgeServer((target) => ({
+    ok: true,
+    target,
+    context: {
+      project_root: repoB,
+      relative_path: 'lua/b.lua',
+      cursor: { line: 7, col: 0 },
+      selection: { active: false },
+      nvim: { version: '0.11.5' },
+    },
+  }))
+
+  fs.mkdirSync(path.join(tmpDir, 'b'), { recursive: true })
+  fs.writeFileSync(
+    path.join(tmpDir, 'b', 'lock.json'),
+    JSON.stringify({ host: bridgeB.host, port: bridgeB.port, token: 'test', project_root: repoB }),
+  )
+
+  const { tools } = loadExtension()
+  const tool = tools[0]!
+  const result = await tool.execute('call_1', { target: 'current' }, undefined, undefined, { cwd: repoA })
+
+  expect(result.isError).toBe(true)
+  expect(result.content[0].text).toContain('No pi.nvim bridge lockfile found')
+
+  await bridgeB.stop()
+  fs.rmSync(tmpDir, { recursive: true, force: true })
+})
+
+test('manual mode sticks to selected instance across cwd changes', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-nvim-ext-manual-'))
+  vi.stubEnv('PI_NVIM_BRIDGE_DIR', tmpDir)
+
+  const repoA = path.join(os.homedir(), 'repo-a')
+  const repoB = path.join(os.homedir(), 'repo-b')
+
+  const bridgeA = await startBridgeServer(() => ({
+    ok: true,
+    context: {
+      project_root: repoA,
+      relative_path: 'lua/a.lua',
+      cursor: { line: 10, col: 0 },
+      selection: { active: false },
+      nvim: { version: '0.11.5' },
+    },
+    text: 'A',
+  }))
+  const bridgeB = await startBridgeServer(() => ({
+    ok: true,
+    context: {
+      project_root: repoB,
+      relative_path: 'lua/b.lua',
+      cursor: { line: 3, col: 0 },
+      selection: { active: false },
+      nvim: { version: '0.11.5' },
+    },
+    text: 'B',
+  }))
+
+  fs.mkdirSync(path.join(tmpDir, 'a'), { recursive: true })
+  fs.mkdirSync(path.join(tmpDir, 'b'), { recursive: true })
+  fs.writeFileSync(path.join(tmpDir, 'a', 'lock.json'), JSON.stringify({ host: bridgeA.host, port: bridgeA.port, token: 'test', project_root: repoA }))
+  fs.writeFileSync(path.join(tmpDir, 'b', 'lock.json'), JSON.stringify({ host: bridgeB.host, port: bridgeB.port, token: 'test', project_root: repoB }))
+
+  const ui = makeUi()
+  ui.select.mockResolvedValue('~/repo-b • lua/b.lua')
+  const { commands, tools } = loadExtension()
+  await commands.find((entry) => entry.name === 'nvim-switch')!.handler('', { cwd: repoA, hasUI: true, ui })
+
+  const result = await tools[0]!.execute('call_1', { target: 'current' }, undefined, undefined, { cwd: repoA })
+  expect(result.isError).not.toBe(true)
+  expect(result.content[0].text).toContain('lua/b.lua')
+
+  await bridgeA.stop()
+  await bridgeB.stop()
+  fs.rmSync(tmpDir, { recursive: true, force: true })
+})
+
+test('status hides after reconnect timeout elapses', async () => {
+  vi.useFakeTimers()
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-nvim-ext-reconnect-'))
+  vi.stubEnv('PI_NVIM_BRIDGE_DIR', tmpDir)
+
+  const repo = path.join(os.homedir(), 'repo-a')
+  const bridge = await startBridgeServer(() => ({
+    ok: true,
+    context: {
+      project_root: repo,
+      relative_path: 'lua/a.lua',
+      cursor: { line: 1, col: 0 },
+      selection: { active: false },
+      nvim: { version: '0.11.5' },
+    },
+  }))
+
+  fs.mkdirSync(path.join(tmpDir, 'a'), { recursive: true })
+  const lockfilePath = path.join(tmpDir, 'a', 'lock.json')
+  fs.writeFileSync(lockfilePath, JSON.stringify({ host: bridge.host, port: bridge.port, token: 'test', project_root: repo }))
+
+  const ui = makeUi()
+  const { sessionStartHandlers } = loadExtension()
+  await sessionStartHandlers[0]!({}, { cwd: repo, hasUI: true, ui })
+  expect(ui.setStatus).toHaveBeenLastCalledWith('nvim-bridge', expect.stringContaining('✓'))
+
+  await bridge.stop()
+  fs.rmSync(lockfilePath, { force: true })
+
+  await vi.advanceTimersByTimeAsync(400)
+  expect(ui.setStatus).toHaveBeenLastCalledWith('nvim-bridge', expect.stringContaining('Reconnecting'))
+
+  await vi.advanceTimersByTimeAsync(5200)
+  expect(ui.setStatus).toHaveBeenLastCalledWith('nvim-bridge', undefined)
+
+  vi.useRealTimers()
   fs.rmSync(tmpDir, { recursive: true, force: true })
 })
