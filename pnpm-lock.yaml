@@ -23,6 +23,9 @@ importers:
       node:
         specifier: runtime:^24.5.1
         version: runtime:24.15.0
+      simple-git-hooks:
+        specifier: ^2.13.1
+        version: 2.13.1
       vite-plus:
         specifier: ^0.1.18
         version: 0.1.18(@types/node@24.12.2)(esbuild@0.27.7)(vite@8.0.8(@types/node@24.12.2)(esbuild@0.27.7)(yaml@2.8.3))(yaml@2.8.3)
@@ -2112,6 +2115,10 @@ packages:
 
   signal-exit@3.0.7:
     resolution: {integrity: sha512-wnD2ZE+l+SPC/uoS0vXeE9L1+0wuaMqKlfz9AMUo38JsyLSBWSFcHR1Rri62LZc12vLr1gb3jl7iwQhgwpAbGQ==}
+
+  simple-git-hooks@2.13.1:
+    resolution: {integrity: sha512-WszCLXwT4h2k1ufIXAgsbiTOazqqevFCIncOuUBZJ91DdvWcC5+OFkluWRQPrcuSYd8fjq+o2y1QfWqYMoAToQ==}
+    hasBin: true
 
   sirv@3.0.2:
     resolution: {integrity: sha512-2wcC/oGxHis/BoHkkPwldgiPSYcpZK3JU28WoMVv55yHJgcZ8rlXvuG9iZggz+sU1d4bRgIGASwyWqjxu3FM0g==}
@@ -4521,6 +4528,8 @@ snapshots:
   siginfo@2.0.0: {}
 
   signal-exit@3.0.7: {}
+
+  simple-git-hooks@2.13.1: {}
 
   sirv@3.0.2:
     dependencies:
